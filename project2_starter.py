@@ -99,7 +99,65 @@ def get_listing_details(listing_id) -> dict:
     # ==============================
     # YOUR CODE STARTS HERE
     # ==============================
-    pass
+    base_dir = os.path.abspath(os.path.dirname(__file__))
+    file_path = os.path.join(base_dir, "html_files", f"listing_{listing_id}.html")
+
+    with open(file_path, "r", encoding="utf-8-sig") as f:
+        soup = BeautifulSoup(f, "html.parser")
+
+    page_text = soup.get_text(" ", strip=True)
+
+    policy_number = "Pending"
+    host_type = "regular"
+    host_name = ""
+    room_type = "Entire Room"
+    location_rating = 0.0
+
+    if "Superhost" in page_text:
+        host_type = "Superhost"
+
+    host_tag = soup.find("div", string=re.compile(r"Hosted by"))
+    if host_tag is not None:
+        host_text = host_tag.get_text(strip=True)
+        host_name = host_text.replace("Hosted by ", "").strip()
+
+    subtitle_tag = soup.find(string=re.compile(r"(Entire|Private|Shared)"))
+    subtitle_text = ""
+    if subtitle_tag is not None:
+        subtitle_text = str(subtitle_tag)
+
+    if "Private" in subtitle_text:
+        room_type = "Private Room"
+    elif "Shared" in subtitle_text:
+        room_type = "Shared Room"
+    else:
+        room_type = "Entire Room"
+
+    all_text = soup.get_text("\n", strip=True)
+    location_match = re.search(r"Location\s*([0-9]\.[0-9])", all_text)
+    if location_match:
+        location_rating = float(location_match.group(1))
+
+    policy_match = re.search(r"Policy number\s*([A-Za-z0-9\-]+|Pending|Exempt)", all_text, re.IGNORECASE)
+    if policy_match:
+        raw_policy = policy_match.group(1).strip()
+        if raw_policy.lower() == "pending":
+            policy_number = "Pending"
+        elif raw_policy.lower() == "exempt":
+            policy_number = "Exempt"
+        else:
+            policy_number = raw_policy
+
+    return {
+        listing_id: {
+            "policy_number": policy_number,
+            "host_type": host_type,
+            "host_name": host_name,
+            "room_type": room_type,
+            "location_rating": location_rating
+        }
+    }
+
     # ==============================
     # YOUR CODE ENDS HERE
     # ==============================
