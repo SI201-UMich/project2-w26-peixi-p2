@@ -45,30 +45,24 @@ def load_listing_results(html_path) -> list[tuple]:
         soup = BeautifulSoup(f, "html.parser")
 
     results = []
-    seen_ids = set()
 
-    listing_titles = soup.find_all(attrs={"data-testid": "listing-card-title"})
+    cards = soup.find_all(attrs={"data-testid": "card-container"})
 
-    for title_tag in listing_titles:
+    for card in cards:
+        title_tag = card.find(attrs={"data-testid": "listing-card-title"})
+        if title_tag is None:
+            continue
+
         listing_title = title_tag.get_text(strip=True)
 
-        parent = title_tag.find_parent(attrs={"data-testid": "card-container"})
-        if parent is None:
-            continue
-
-        link_tag = parent.find("a", href=True)
-        if link_tag is None:
-            continue
-
-        match = re.search(r"/rooms/(\d+)", link_tag["href"])
-        if match is None:
-            continue
-
-        listing_id = match.group(1)
-
-        if listing_id not in seen_ids:
-            results.append((listing_title, listing_id))
-            seen_ids.add(listing_id)
+        href = None
+        for a_tag in card.find_all("a", href=True):
+            match = re.search(r"/rooms/(?:plus/)?(\d+)", a_tag["href"])
+            if match:
+                href = a_tag["href"]
+                listing_id = match.group(1)
+                results.append((listing_title, listing_id))
+                break
 
     return results
     # ==============================
@@ -103,8 +97,9 @@ def get_listing_details(listing_id) -> dict:
     file_path = os.path.join(base_dir, "html_files", f"listing_{listing_id}.html")
 
     with open(file_path, "r", encoding="utf-8-sig") as f:
-        soup = BeautifulSoup(f, "html.parser")
+        html = f.read()
 
+    soup = BeautifulSoup(html, "html.parser")
     page_text = soup.get_text(" ", strip=True)
 
     policy_number = "Pending"
@@ -116,37 +111,68 @@ def get_listing_details(listing_id) -> dict:
     if "Superhost" in page_text:
         host_type = "Superhost"
 
-    host_tag = soup.find("div", string=re.compile(r"Hosted by"))
-    if host_tag is not None:
-        host_text = host_tag.get_text(strip=True)
-        host_name = host_text.replace("Hosted by ", "").strip()
+    host_match = re.search(r"Hosted by\s+([A-Za-z][A-Za-z &]+)", page_text)
+    if host_match:
+        host_name = host_match.group(1).strip()
+        host_name = re.split(r"Joined in|is a Superhost|Superhost", host_name)[0].strip()
 
-    subtitle_tag = soup.find(string=re.compile(r"(Entire|Private|Shared)"))
-    subtitle_text = ""
-    if subtitle_tag is not None:
-        subtitle_text = str(subtitle_tag)
 
-    if "Private" in subtitle_text:
-        room_type = "Private Room"
-    elif "Shared" in subtitle_text:
-        room_type = "Shared Room"
+    subtitle_match = re.search(
+        r"(Private room|Shared room|Entire [A-Za-z ]+?)\s+hosted by",
+        page_text,
+        re.IGNORECASE
+    )
+    if subtitle_match:
+        subtitle = subtitle_match.group(1)
+        if "Private" in subtitle:
+            room_type = "Private Room"
+        elif "Shared" in subtitle:
+            room_type = "Shared Room"
+        else:
+            room_type = "Entire Room"
     else:
-        room_type = "Entire Room"
 
-    all_text = soup.get_text("\n", strip=True)
-    location_match = re.search(r"Location\s*([0-9]\.[0-9])", all_text)
-    if location_match:
-        location_rating = float(location_match.group(1))
+        if "Private room" in page_text:
+            room_type = "Private Room"
+        elif "Shared room" in page_text:
+            room_type = "Shared Room"
+        else:
+            room_type = "Entire Room"
 
-    policy_match = re.search(r"Policy number\s*([A-Za-z0-9\-]+|Pending|Exempt)", all_text, re.IGNORECASE)
-    if policy_match:
-        raw_policy = policy_match.group(1).strip()
+    loc_match = re.search(r'"locationRating":([0-9.]+)', html)
+    if loc_match:
+        location_rating = float(loc_match.group(1))
+    else:
+        text_loc_match = re.search(r"Location\s*([0-9]\.[0-9])", page_text)
+        if text_loc_match:
+            location_rating = float(text_loc_match.group(1))
+
+    text_policy_match = re.search(
+        r"Policy number[:\s]*([A-Za-z0-9\-]+)",
+        page_text,
+        re.IGNORECASE
+    )
+    if text_policy_match:
+        raw_policy = text_policy_match.group(1).strip()
         if raw_policy.lower() == "pending":
             policy_number = "Pending"
         elif raw_policy.lower() == "exempt":
             policy_number = "Exempt"
         else:
             policy_number = raw_policy
+    else:
+        json_policy_match = re.search(
+            r'"title":"Policy number","subtitle":"([^"]+)"',
+            html
+        )
+        if json_policy_match:
+            raw_policy = json_policy_match.group(1).strip()
+            if "pending" in raw_policy.lower():
+                policy_number = "Pending"
+            elif "exempt" in raw_policy.lower():
+                policy_number = "Exempt"
+            else:
+                policy_number = raw_policy.replace("\ufeff", "").strip()
 
     return {
         listing_id: {
@@ -157,7 +183,6 @@ def get_listing_details(listing_id) -> dict:
             "location_rating": location_rating
         }
     }
-
     # ==============================
     # YOUR CODE ENDS HERE
     # ==============================
@@ -224,13 +249,13 @@ def output_csv(data, filename) -> None:
         writer = csv.writer(f)
 
         writer.writerow([
-            "listing_title",
-            "listing_id",
-            "policy_number",
-            "host_type",
-            "host_name",
-            "room_type",
-            "location_rating"
+            "Listing Title",
+            "Listing ID",
+            "Policy Number",
+            "Host Type",
+            "Host Name",
+            "Room Type",
+            "Location Rating"
         ])
 
         for row in sorted_data:
@@ -306,7 +331,7 @@ def validate_policy_numbers(data) -> list[str]:
         if policy_number in ["Pending", "Exempt"]:
             continue
 
-        if not re.fullmatch(r"STR-\d+", policy_number):
+        if not re.fullmatch(r"(20\d{2}-00\d{4}STR|STR-\d+)", policy_number):
             invalid_listings.append(listing_id)
 
     return invalid_listings
@@ -453,5 +478,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
-    unittest.main(verbosity=2)
+    main()                
+    unittest.main(verbosity=2) 
