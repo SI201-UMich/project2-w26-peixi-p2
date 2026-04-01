@@ -329,7 +329,29 @@ def google_scholar_searcher(query):
     # ==============================
     # YOUR CODE STARTS HERE
     # ==============================
-    pass
+    url = "https://scholar.google.com/scholar"
+
+    params = {
+        "q": query
+    }
+
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+
+    response = requests.get(url, params=params, headers=headers)
+
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    titles = []
+
+    for item in soup.find_all("h3", class_="gs_rt"):
+        title = item.get_text(strip=True)
+        if title:
+            titles.append(title)
+
+    return titles
+    # ==============================
     # ==============================
     # YOUR CODE ENDS HERE
     # ==============================
